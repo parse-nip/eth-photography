@@ -10,13 +10,6 @@ import {
 import { mainnet } from "viem/chains";
 import { normalize, packetToBytes } from "viem/ens";
 
-// A "client" is our connection to Ethereum. ENS lives on-chain, so we ask an
-// Ethereum node (via an RPC URL) to run read-only contract calls for us.
-// With no URL, viem uses a public default node: fine for learning, rate-limited.
-const client = createPublicClient({
-  chain: mainnet,
-  transport: http(process.env.ETH_RPC_URL),
-});
 
 // The inner call: "what is the contenthash for this node?"
 const contenthashAbi = parseAbi(["function contenthash(bytes32 node) view returns (bytes)"]);
@@ -32,8 +25,21 @@ const resolverAbi = parseAbi([
 ]);
 const ENSIP10_INTERFACE_ID = "0x9061b923";
 
+// Build a resolver bound to one RPC endpoint. A "client" is our connection to
+// Ethereum: ENS lives on-chain, so we ask a node (via an RPC URL) to run
+// read-only contract calls. With no URL, viem uses a public default node:
+// fine for learning, rate-limited. Taking the URL as an argument (instead of
+// reading process.env) lets the same code run on Node and Cloudflare Workers.
+export function createResolver(rpcUrl?: string) {
+  const client = createPublicClient({ chain: mainnet, transport: http(rpcUrl) });
+  return (name: string) => getContenthashHex(client, name);
+}
+
 // Returns the raw contenthash as hex (e.g. "0xe301017012...") or null if unset.
-export async function getContenthashHex(name: string): Promise<`0x${string}` | null> {
+async function getContenthashHex(
+  client: ReturnType<typeof createPublicClient>,
+  name: string,
+): Promise<`0x${string}` | null> {
   // normalize() enforces ENS naming rules (lowercase, unicode handling) and
   // throws on invalid names. Skipping it means look-alike names could resolve
   // differently than users expect.
