@@ -1,0 +1,29 @@
+{
+  "name": "eth-photography",
+  "version": "1.0.0",
+  "description": "ENS-to-Web2 gateway for eth.photography",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/parse-nip/eth-photography.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/parse-nip/eth-photography/issues"
+  },
+  "homepage": "https://github.com/parse-nip/eth-photography#readme",
+  "type": "module",
+  "dependencies": {
+    "viem": "^2.58.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}
