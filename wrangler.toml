@@ -3,9 +3,12 @@ main = "src/worker.ts"
 compatibility_date = "2025-01-01"
 
 # Run on every subdomain of the zone. Requires eth.photography to be a Cloudflare zone.
-routes = [{ pattern = "*.eth.photography/*", zone_name = "eth.photography" }]
+routes = [
+  { pattern = "*.eth.photography/*", zone_name = "eth.photography" },
+  { pattern = "eth.photography/*", zone_name = "eth.photography" },
+]
 
 [vars]
 BASE_DOMAIN = "eth.photography"
-IPFS_GATEWAY = "https://ipfs.io"
+IPFS_GATEWAY = "https://plum-decisive-chickadee-217.mypinata.cloud"
 # ETH_RPC_URL is a secret: run `npx wrangler secret put ETH_RPC_URL`
