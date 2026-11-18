@@ -115,3 +115,12 @@ test("resolver sends the signed-record Accept header", async () => {
 });
 
 void ed25519;
+
+test("resolver treats a router's plain-text 'not found' (HTTP 200) as no record", async () => {
+  const k = newKey();
+  const resolve = createIpnsResolver({
+    sources: ["https://a.test/ipns"],
+    fetch: (async () => new Response("delegate error: routing: not found", { headers: { "content-type": "text/plain" } })) as any,
+  });
+  await assert.rejects(resolve(k.name), /routing: not found/);
+});

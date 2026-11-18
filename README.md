@@ -37,11 +37,20 @@ Env: `ETH_RPC_URL` (Ethereum RPC), `IPFS_GATEWAYS` (comma-separated trustless ga
 ## Deploy
 See the setup checklist: Cloudflare zone, wildcard DNS, `ETH_RPC_URL` secret, dedicated IPFS gateway, `npm run deploy`.
 
+## Features
+- Range requests (video seeking, resumable downloads): skips chunks outside the range.
+- SPA fallback: extensionless unknown paths serve `index.html` to browsers; a site's own `404.html` wins if present.
+- IPNS key names (ed25519): signed records fetched from several sources, verified locally
+  (signature, expiry, highest sequence). A forged or expired record is never served.
+- DNSLink for ENS names that store a domain.
+
 ## Known limits
-- IPFS only. IPNS key names (`k51...`), Swarm and Arweave return 501. DNSLink works for `/ipfs/` targets.
+- IPFS only. Swarm and Arweave return 501. RSA IPNS keys return 501.
+- IPNS needs a source that has the record. Public routers often don't (see `IPNS_SOURCES`);
+  the ENS team's eth.limo uses its own node. IPNS can't prove a record is the *latest*,
+  only that it is genuine and unexpired (a source could serve an older valid one).
 - Sharded (HAMT) directories return 501; very large folders are affected.
-- No Range requests, no directory listings, no SPA `404.html` fallback.
-- One HTTP request per block: Cloudflare's free plan allows 50 subrequests per request, so
-  files over ~10 MB may fail there. The fix is fetching a CAR stream (one request per file).
-- ASCII names only (no emoji/unicode ENS names yet).
+- Nested names (`app.ens.eth.photography`) need a certificate beyond the free `*.eth.photography`.
+- Third-party apps that allowlist their own domain (API keys, wallet-connect IDs) may refuse ours; not fixable here.
+- No directory listings. ASCII names only (no emoji/unicode ENS names yet).
 - DNSLink answers come from Cloudflare DoH and can't be hash-verified.

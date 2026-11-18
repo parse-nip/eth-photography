@@ -176,6 +176,11 @@ export function createIpnsResolver(opts: IpnsResolverOptions): IpnsResolver {
       signal: AbortSignal.timeout(8_000),
     });
     if (!res.ok) throw new IpnsError(`${source}: HTTP ${res.status}`);
+    // Some routers answer "200 OK" with a plain-text error ("routing: not found").
+    // A real record is binary; treat text as the "no record" answer it is.
+    if ((res.headers.get("content-type") ?? "").startsWith("text/")) {
+      throw new IpnsError(`${source}: ${(await res.text()).trim().slice(0, 60)}`);
+    }
     const bytes = new Uint8Array(await res.arrayBuffer());
     return verifyRecord(name, bytes, now()); // throws if the signature/expiry check fails
   }
