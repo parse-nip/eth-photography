@@ -2,7 +2,7 @@ import { decodeContenthash, UnsupportedContenthashError } from "./contenthash.js
 import { CID } from "multiformats/cid";
 import { BlockUnavailableError, type GetBlock } from "./ipfs/blocks.js";
 import type { DnsLinkResolver } from "./ipfs/dnslink.js";
-import { NotFoundError, resolvePath, streamFile, UnsupportedUnixFsError } from "./ipfs/unixfs.js";
+import { NotFoundError, openFile, resolvePath, UnsupportedUnixFsError } from "./ipfs/unixfs.js";
 import { contentTypeFor } from "./mime.js";
 
 export interface GatewayOptions {
@@ -143,7 +143,7 @@ export function createGateway(opts: GatewayOptions) {
       });
       if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers });
 
-      const body = request.method === "HEAD" ? null : streamFile(opts.getBlock, target.cid);
+      const body = request.method === "HEAD" ? null : await openFile(opts.getBlock, target.cid);
       return new Response(body, { status: 200, headers });
     } catch (err) {
       if (err instanceof NoContentError) return text(404, `${ensName} has no website set`);

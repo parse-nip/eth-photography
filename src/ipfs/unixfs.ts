@@ -89,16 +89,22 @@ async function* walkFile(getBlock: GetBlock, cid: CID): AsyncGenerator<Uint8Arra
   for (const link of node.Links) yield* walkFile(getBlock, link.Hash);
 }
 
-export function streamFile(getBlock: GetBlock, cid: CID): ReadableStream<Uint8Array> {
+// Open a file for streaming. We fetch the FIRST chunk before returning, so that
+// if the content is unreachable the caller finds out now and can send an honest
+// error status. Once an HTTP response has started, a failure can only truncate it.
+export async function openFile(getBlock: GetBlock, cid: CID): Promise<ReadableStream<Uint8Array>> {
   const it = walkFile(getBlock, cid);
+  let pending: IteratorResult<Uint8Array> | undefined = await it.next(); // throws if unreachable
+
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
-        const { value, done } = await it.next();
+        const { value, done } = pending ?? (await it.next());
+        pending = undefined;
         if (done) controller.close();
         else controller.enqueue(value);
       } catch (err) {
-        controller.error(err); // headers are already sent; the client sees a truncated body
+        controller.error(err); // mid-stream failure: the client sees a truncated body
       }
     },
     cancel() { void it.return(undefined); }, // client went away: stop fetching blocks

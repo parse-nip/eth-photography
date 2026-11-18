@@ -18,11 +18,22 @@ export type GetBlock = (cid: CID) => Promise<Uint8Array>;
 
 export class BlockUnavailableError extends Error {}
 
+// The slice of the Workers Cache API we use (caches.default). Optional, so the
+// same code runs on plain Node, where there is no such cache.
+export interface PersistentCache {
+  match(url: string): Promise<Response | undefined>;
+  put(url: string, response: Response): Promise<void>;
+}
+
 export interface BlockFetcherOptions {
   /** Base URLs of trustless-capable gateways, tried in order. */
   gateways: string[];
   fetch?: typeof fetch;
   timeoutMs?: number;
+  /** Full passes over the gateway list before giving up (default 2). */
+  rounds?: number;
+  /** Where to keep verified blocks across requests (Cloudflare edge cache). */
+  persistentCache?: PersistentCache;
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
@@ -43,6 +54,7 @@ async function verify(cid: CID, bytes: Uint8Array): Promise<boolean> {
 export function createBlockFetcher(opts: BlockFetcherOptions): GetBlock {
   const doFetch = opts.fetch ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 10_000;
+  const rounds = opts.rounds ?? 2;
 
   // Directory nodes get re-read for every file on a page, so keep recent blocks
   // in memory. Only small ones: big file chunks are read once and would just
@@ -59,8 +71,19 @@ export function createBlockFetcher(opts: BlockFetcherOptions): GetBlock {
     const hit = cache.get(key);
     if (hit) return hit;
 
+    // A block's CID is a hash of its content, so a block NEVER changes. That makes
+    // it safe to cache forever: once we've fetched and verified it, no gateway
+    // is needed again. The cache key is a made-up URL that just has to be unique.
+    const cacheKey = `https://blocks.invalid/ipfs/${key}`;
+    if (opts.persistentCache) {
+      const cached = await opts.persistentCache.match(cacheKey).catch(() => undefined);
+      if (cached) return new Uint8Array(await cached.arrayBuffer());
+    }
+
     const errors: string[] = [];
-    for (const gateway of opts.gateways) {
+    for (let round = 0; round < rounds; round++) {
+     if (round > 0) await new Promise((r) => setTimeout(r, 300)); // brief pause: rate limits are often momentary
+     for (const gateway of opts.gateways) {
       try {
         // ?format=raw + this Accept header = the "trustless gateway" protocol:
         // give me the raw block, not a rendered web page.
@@ -87,11 +110,16 @@ export function createBlockFetcher(opts: BlockFetcherOptions): GetBlock {
           if (cache.size >= CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value!);
           cache.set(key, bytes);
         }
+        // Only verified bytes ever reach the persistent cache.
+        await opts.persistentCache
+          ?.put(cacheKey, new Response(bytes, { headers: { "cache-control": "public, max-age=31536000, immutable" } }))
+          .catch(() => {});
         return bytes;
       } catch (err) {
         if (err instanceof BlockUnavailableError) throw err;
         errors.push(`${gateway}: ${(err as Error).message}`);
       }
+     }
     }
     throw new BlockUnavailableError(`could not fetch ${key} (${errors.join("; ")})`);
   };

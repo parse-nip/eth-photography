@@ -150,3 +150,11 @@ test("caches name resolution between requests", async () => {
   await gw(req("https://a.eth.photography/app.js"));
   assert.equal(resolved.length, 1);
 });
+
+test("unreachable first chunk gives 502, not an empty 200", async () => {
+  const { gw, s } = await setup();
+  // Drop every raw leaf block, so the file node exists but its chunks do not.
+  for (const [k] of s.blocks) if (k.startsWith("bafkrei")) s.blocks.delete(k);
+  const res = await gw(req("https://a.eth.photography/big.txt"));
+  assert.equal(res.status, 502);
+});

@@ -52,3 +52,44 @@ test("caches small blocks", async () => {
   await get(cid); await get(cid);
   assert.equal(n, 1);
 });
+
+test("retries a transient failure on a later round", async () => {
+  const { bytes, cid } = await blockOf("flaky");
+  let n = 0;
+  const get = createBlockFetcher({
+    gateways: ["https://g.test"],
+    fetch: (async () => (++n === 1 ? new Response("busy", { status: 429 }) : new Response(bytes))) as any,
+  });
+  assert.deepEqual(await get(cid), bytes);
+  assert.equal(n, 2);
+});
+
+test("persistent cache: verified blocks are stored and reused without the network", async () => {
+  const { bytes, cid } = await blockOf("edge cached");
+  const store = new Map<string, Uint8Array>();
+  const persistentCache = {
+    async match(url: string) { const b = store.get(url); return b ? new Response(b) : undefined; },
+    async put(url: string, res: Response) { store.set(url, new Uint8Array(await res.arrayBuffer())); },
+  };
+  let n = 0;
+  const mk = () => createBlockFetcher({
+    gateways: ["https://g.test"], persistentCache,
+    fetch: (async () => { n++; return new Response(bytes); }) as any,
+  });
+  await mk()(cid);                       // first isolate: network, then stored
+  assert.equal(store.size, 1);
+  assert.deepEqual(await mk()(cid), bytes); // a fresh fetcher (new isolate) hits the cache
+  assert.equal(n, 1);
+});
+
+test("tampered bytes never reach the persistent cache", async () => {
+  const { cid } = await blockOf("real");
+  const store = new Map<string, Uint8Array>();
+  const persistentCache = {
+    async match() { return undefined; },
+    async put(url: string, res: Response) { store.set(url, new Uint8Array(await res.arrayBuffer())); },
+  };
+  const get = createBlockFetcher({ gateways: ["https://g.test"], rounds: 1, persistentCache, fetch: (async () => new Response("FAKE")) as any });
+  await assert.rejects(get(cid), BlockUnavailableError);
+  assert.equal(store.size, 0);
+});
