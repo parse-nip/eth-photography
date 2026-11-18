@@ -22,6 +22,8 @@
   "homepage": "https://github.com/parse-nip/eth-photography#readme",
   "type": "module",
   "dependencies": {
+    "@ipld/dag-pb": "^4.2.0",
+    "ipfs-unixfs": "^13.1.2",
     "multiformats": "^14.0.6",
     "viem": "^2.58.0"
   },

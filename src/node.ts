@@ -2,13 +2,12 @@
 // Adapts Node's http module to the web-standard Request/Response the gateway uses.
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
-import { createGateway } from "./gateway.js";
-import { createResolver } from "./resolve.js";
+import { buildGateway } from "./setup.js";
 
-const handle = createGateway({
-  baseDomain: process.env.BASE_DOMAIN ?? "localhost",
-  ipfsGateway: process.env.IPFS_GATEWAY,
-  resolveContenthash: createResolver(process.env.ETH_RPC_URL),
+const handle = buildGateway({
+  BASE_DOMAIN: process.env.BASE_DOMAIN ?? "localhost",
+  IPFS_GATEWAYS: process.env.IPFS_GATEWAYS ?? "https://ipfs.filebase.io,https://trustless-gateway.link",
+  ETH_RPC_URL: process.env.ETH_RPC_URL,
 });
 
 const port = Number(process.env.PORT ?? 8787);

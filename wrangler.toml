@@ -10,5 +10,6 @@ routes = [
 
 [vars]
 BASE_DOMAIN = "eth.photography"
-IPFS_GATEWAY = "https://plum-decisive-chickadee-217.mypinata.cloud"
+# Trustless gateways, tried in order. Blocks are hash-verified, so these need no trust.
+IPFS_GATEWAYS = "https://ipfs.filebase.io,https://trustless-gateway.link"
 # ETH_RPC_URL is a secret: run `npx wrangler secret put ETH_RPC_URL`
