@@ -158,3 +158,129 @@ test("unreachable first chunk gives 502, not an empty 200", async () => {
   const res = await gw(req("https://a.eth.photography/big.txt"));
   assert.equal(res.status, 502);
 });
+
+// ---- Range requests: big.txt is the 3 chunks "AAA" "BBB" "CCC" ----
+const range = (gw: (r: Request) => Promise<Response>, r: string) =>
+  gw(req("https://a.eth.photography/big.txt", { headers: { range: r } }));
+
+test("Range: spans chunk boundaries and returns 206 with correct headers", async () => {
+  const { gw } = await setup();
+  const res = await range(gw, "bytes=2-5");
+  assert.equal(res.status, 206);
+  assert.equal(await res.text(), "ABBB");
+  assert.equal(res.headers.get("content-range"), "bytes 2-5/9");
+  assert.equal(res.headers.get("content-length"), "4");
+});
+
+test("Range: open-ended, suffix, and end clamped to file size", async () => {
+  const { gw } = await setup();
+  assert.equal(await (await range(gw, "bytes=7-")).text(), "CC");
+  assert.equal(await (await range(gw, "bytes=-4")).text(), "BCCC");
+  assert.equal(await (await range(gw, "bytes=6-999")).text(), "CCC");
+});
+
+test("Range: past the end is 416; garbage or multi-range falls back to the full file", async () => {
+  const { gw } = await setup();
+  const bad = await range(gw, "bytes=50-60");
+  assert.equal(bad.status, 416);
+  assert.equal(bad.headers.get("content-range"), "bytes */9");
+  assert.equal(await (await range(gw, "bytes=0-1,4-5")).text(), "AAABBBCCC");
+  assert.equal(await (await range(gw, "nonsense")).text(), "AAABBBCCC");
+});
+
+test("Range: skips chunks outside the range instead of downloading them", async () => {
+  const { gw, s } = await setup();
+  s.fetches.length = 0;
+  await (await range(gw, "bytes=7-8")).text(); // only the last chunk "CCC" matters
+  const leafFetches = s.fetches.filter((c) => c.startsWith("bafkrei"));
+  assert.equal(leafFetches.length, 1);
+});
+
+test("200 responses advertise Accept-Ranges", async () => {
+  const res = await (await setup()).gw(req("https://a.eth.photography/app.js"));
+  assert.equal(res.headers.get("accept-ranges"), "bytes");
+});
+
+// ---- SPA fallback and 404.html ----
+const nav = { accept: "text/html,application/xhtml+xml" };
+
+test("SPA fallback: unknown extensionless path for a browser serves index.html with 200", async () => {
+  const { gw } = await setup();
+  const res = await gw(req("https://a.eth.photography/swap/eth", { headers: nav }));
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), "<h1>home</h1>");
+});
+
+test("SPA fallback does not apply to missing files or non-browser requests", async () => {
+  const { gw } = await setup();
+  assert.equal((await gw(req("https://a.eth.photography/missing.js", { headers: nav }))).status, 404);
+  assert.equal((await gw(req("https://a.eth.photography/swap/eth"))).status, 404); // curl / fetch(): no text/html
+});
+
+test("a site's own 404.html is served with status 404, in preference to SPA fallback", async () => {
+  const s = new MemStore();
+  const root = await s.dir({
+    "index.html": await s.file("home"),
+    "404.html": await s.file("custom not found"),
+  });
+  const gw = createGateway({
+    baseDomain: "eth.photography",
+    resolveContenthash: async () => cidToContenthashHex(root),
+    getBlock: s.getBlock,
+    resolveDnsLink: async () => null,
+  });
+  const res = await gw(req("https://a.eth.photography/nope", { headers: nav }));
+  assert.equal(res.status, 404);
+  assert.equal(await res.text(), "custom not found");
+});
+
+// ---- IPNS through the whole gateway ----
+import { buildRecord, newKey } from "./ipns-helpers.js";
+import { createIpnsResolver } from "../src/ipfs/ipns.js";
+
+// ENS contenthash for an IPNS key: 0xe5 0x01 + CIDv1(libp2p-key). The name's CID bytes come from the base36 name.
+import { base36 } from "multiformats/bases/base36";
+import { CID } from "multiformats/cid";
+const ipnsHex = (name: string): `0x${string}` => {
+  const bytes = new Uint8Array([0xe5, 0x01, ...CID.parse(name, base36).bytes]);
+  return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+};
+
+async function ipnsSetup(makeRecord: (key: ReturnType<typeof newKey>, root: string) => Uint8Array) {
+  const { s, root } = await site();
+  const key = newKey();
+  const gw = createGateway({
+    baseDomain: "eth.photography",
+    resolveContenthash: async () => ipnsHex(key.name),
+    getBlock: s.getBlock,
+    resolveDnsLink: async () => null,
+    resolveIpns: createIpnsResolver({
+      sources: ["https://r.test/ipns"],
+      fetch: (async () => new Response(makeRecord(key, root.toString()))) as any,
+    }),
+  });
+  return gw;
+}
+
+test("IPNS: ENS name -> key -> verified record -> site", async () => {
+  const gw = await ipnsSetup((k, root) => buildRecord(k, `/ipfs/${root}`));
+  const { res, body } = await get(gw, "https://app.eth.photography/about/");
+  assert.equal(res.status, 200);
+  assert.equal(body, "<h1>about</h1>");
+});
+
+test("IPNS: record pointing into a sub-directory serves that directory as the site root", async () => {
+  const gw = await ipnsSetup((k, root) => buildRecord(k, `/ipfs/${root}/about`));
+  assert.equal((await get(gw, "https://app.eth.photography/")).body, "<h1>about</h1>");
+});
+
+test("IPNS: forged record gives 502, never attacker content", async () => {
+  const attacker = newKey();
+  const gw = await ipnsSetup((k, root) => buildRecord(k, `/ipfs/${root}`, { signWith: attacker.secretKey }));
+  assert.equal((await gw(req("https://app.eth.photography/"))).status, 502);
+});
+
+test("IPNS: expired record gives 502", async () => {
+  const gw = await ipnsSetup((k, root) => buildRecord(k, `/ipfs/${root}`, { validUntil: new Date(Date.now() - 1000) }));
+  assert.equal((await gw(req("https://app.eth.photography/"))).status, 502);
+});

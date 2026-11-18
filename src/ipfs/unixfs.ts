@@ -74,26 +74,74 @@ export async function resolvePath(getBlock: GetBlock, root: CID, segments: strin
   }
 }
 
+// A byte range inside a file. `end` is exclusive.
+export interface ByteRange { start: number; end: number }
+
 // Stream a file's bytes in order. Each block is fetched lazily, only when the
 // consumer (the HTTP response) is ready for more, and verified by getBlock.
-async function* walkFile(getBlock: GetBlock, cid: CID): AsyncGenerator<Uint8Array> {
+//
+// With a `range`, we only yield the requested bytes AND skip downloading chunks
+// that lie wholly outside it. That works because a UnixFS file node records the
+// size of every child chunk ("blockSizes"), so we can do the arithmetic
+// "this chunk covers bytes 5,242,880 to 5,505,024" without fetching it.
+// `offset` is where this node's first byte sits within the whole file.
+async function* walkFile(
+  getBlock: GetBlock,
+  cid: CID,
+  range?: ByteRange,
+  offset = 0,
+): AsyncGenerator<Uint8Array> {
+  // Cut `bytes` (which start at file position `at`) down to the requested range.
+  const clip = (bytes: Uint8Array, at: number): Uint8Array | undefined => {
+    if (!range) return bytes;
+    const from = Math.max(range.start - at, 0);
+    const to = Math.min(range.end - at, bytes.length);
+    return from < to ? bytes.subarray(from, to) : undefined;
+  };
+
   const block = await inspect(getBlock, cid);
-  if (block.kind === "raw") { yield block.bytes; return; }
+  if (block.kind === "raw") {
+    const piece = clip(block.bytes, offset);
+    if (piece) yield piece;
+    return;
+  }
 
   const { node, unixfs } = block;
   if (unixfs.type !== "file" && unixfs.type !== "raw") {
     throw new UnsupportedUnixFsError(`expected a file, found "${unixfs.type}"`);
   }
+
+  let pos = offset;
   // A file block can carry some bytes of its own, followed by its chunks.
-  if (unixfs.data && unixfs.data.length > 0) yield unixfs.data;
-  for (const link of node.Links) yield* walkFile(getBlock, link.Hash);
+  if (unixfs.data && unixfs.data.length > 0) {
+    const piece = clip(unixfs.data, pos);
+    if (piece) yield piece;
+    pos += unixfs.data.length;
+  }
+
+  for (let i = 0; i < node.Links.length; i++) {
+    if (!range) { yield* walkFile(getBlock, node.Links[i].Hash); continue; }
+
+    const size = unixfs.blockSizes[i];
+    if (size === undefined) throw new UnsupportedUnixFsError("file has no block sizes; cannot seek");
+    const childEnd = pos + Number(size);
+    if (childEnd <= range.start) { pos = childEnd; continue; } // entirely before the range: skip
+    if (pos >= range.end) return;                              // entirely after: we're done
+    yield* walkFile(getBlock, node.Links[i].Hash, range, pos);
+    pos = childEnd;
+  }
 }
 
-// Open a file for streaming. We fetch the FIRST chunk before returning, so that
-// if the content is unreachable the caller finds out now and can send an honest
-// error status. Once an HTTP response has started, a failure can only truncate it.
-export async function openFile(getBlock: GetBlock, cid: CID): Promise<ReadableStream<Uint8Array>> {
-  const it = walkFile(getBlock, cid);
+// Open a file (or a byte range of it) for streaming. We fetch the FIRST chunk
+// before returning, so that if the content is unreachable the caller finds out
+// now and can send an honest error status. Once an HTTP response has started, a
+// failure can only truncate it.
+export async function openFile(
+  getBlock: GetBlock,
+  cid: CID,
+  range?: ByteRange,
+): Promise<ReadableStream<Uint8Array>> {
+  const it = walkFile(getBlock, cid, range);
   let pending: IteratorResult<Uint8Array> | undefined = await it.next(); // throws if unreachable
 
   return new ReadableStream<Uint8Array>({

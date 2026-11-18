@@ -23,6 +23,8 @@
   "type": "module",
   "dependencies": {
     "@ipld/dag-pb": "^4.2.0",
+    "@noble/curves": "^2.4.0",
+    "cborg": "^7.0.0",
     "ipfs-unixfs": "^13.1.2",
     "multiformats": "^14.0.6",
     "viem": "^2.58.0"
